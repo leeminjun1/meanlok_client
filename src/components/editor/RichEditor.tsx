@@ -9,10 +9,22 @@ import { Button } from '@/components/ui/Button';
 
 const HeaderAsCell = TableHeader.extend({
   parseHTML() {
-    return [{ tag: 'th' }, { tag: 'td.th-cell' }];
+    return [{ tag: 'th' }, { tag: 'td[data-th-cell=\"true\"]' }, { tag: 'td.th-cell' }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ['td', { ...HTMLAttributes, class: 'th-cell' }, 0];
+    const className = HTMLAttributes.class
+      ? `${HTMLAttributes.class} th-cell`
+      : 'th-cell';
+
+    return [
+      'td',
+      {
+        ...HTMLAttributes,
+        class: className,
+        'data-th-cell': 'true',
+      },
+      0,
+    ];
   },
 });
 
