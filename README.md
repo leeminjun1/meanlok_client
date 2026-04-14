@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mean록 Client
 
-## Getting Started
+Mean록 프론트엔드 애플리케이션입니다.
 
-First, run the development server:
+- Framework: Next.js (App Router)
+- Language: TypeScript
+- UI: Tailwind CSS
+- State/Data: TanStack Query
+- Auth: Supabase Auth (Client SDK)
+
+## 주요 기능
+
+- 회원가입 / 로그인
+- 대시보드 (내 워크스페이스, 공유받은 페이지)
+- 워크스페이스/페이지 트리 탐색
+- 페이지 생성/이름변경/이동/복제
+- 하이브리드 에디터
+  - Rich 편집
+  - Markdown 소스
+  - Preview
+- 페이지 공유
+  - 이메일 기반 공유
+  - 링크 전용 초대 생성
+  - 상속 공유/대기 초대 조회
+- 권한 기반 UI
+  - `EDITOR`: 편집 가능
+  - `VIEWER`: 읽기 전용
+
+## 사전 요구사항
+
+- Node.js 22+
+- npm 10+
+- 실행 중인 `meanlok_server` (기본: `http://localhost:3001`)
+- Supabase 프로젝트
+
+## 환경 변수
+
+`.env.local` 파일 생성:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.local.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+필수 값:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `NEXT_PUBLIC_API_URL` (예: `http://localhost:3001/api`)
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 로컬 실행
 
-## Learn More
+```bash
+npm install
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+- Local: `http://localhost:3000`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 빌드 / 린트
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run build
+npm run lint
+```
 
-## Deploy on Vercel
+## 주요 경로
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `src/app/(app)/dashboard/page.tsx`: 대시보드
+- `src/app/(app)/w/[workspaceId]/p/[pageId]/page.tsx`: 페이지 편집 화면
+- `src/components/modals/SharePageModal.tsx`: 페이지 공유 모달
+- `src/app/page-invites/[token]/page.tsx`: 페이지 초대 수락
+- `src/lib/api/endpoints.ts`: API 호출 집합
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 참고
+
+- 페이지 초대는 현재 메일 실제 발송 대신 링크 기반 수락 흐름을 사용합니다.
