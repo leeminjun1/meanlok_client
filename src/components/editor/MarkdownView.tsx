@@ -7,8 +7,18 @@ interface MarkdownViewProps {
   body: string;
 }
 
+function escapeHtml(raw: string) {
+  return raw
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 export function MarkdownView({ body }: MarkdownViewProps) {
-  const parsed = marked.parse(body ?? '', { async: false }) as string;
+  // In Markdown mode, treat raw HTML tags as plain text.
+  const parsed = marked.parse(escapeHtml(body ?? ''), { async: false }) as string;
   const clean = sanitizeHtml(parsed);
 
   return (

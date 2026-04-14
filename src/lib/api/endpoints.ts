@@ -1,12 +1,19 @@
 import { apiClient } from '@/lib/api/client';
 import type {
+  AiAskResponse,
+  AiUsageSummary,
+  AcceptPageInviteResponse,
   AcceptInviteResponse,
   AuthMeResponse,
   DocFormat,
   InheritedShare,
   Invite,
+  InvitePreview,
+  LinkInviteMode,
   Member,
+  PageAccessRequest,
   PageDetail,
+  PageInvitePreview,
   PageInviteSummary,
   PageListResponse,
   PageRole,
@@ -44,7 +51,10 @@ export function getWorkspacePublicInfo(id: string) {
     .then((res) => res.data);
 }
 
-export function updateWorkspace(id: string, payload: { name: string }) {
+export function updateWorkspace(
+  id: string,
+  payload: { name?: string; linkInviteMode?: LinkInviteMode },
+) {
   return apiClient
     .patch<Workspace>(`/workspaces/${id}`, payload)
     .then((res) => res.data);
@@ -100,6 +110,12 @@ export function revokeInvite(workspaceId: string, inviteId: string) {
 export function acceptInvite(payload: { token: string }) {
   return apiClient
     .post<AcceptInviteResponse>('/invites/accept', payload)
+    .then((res) => res.data);
+}
+
+export function getInvitePreview(token: string) {
+  return apiClient
+    .get<InvitePreview>(`/invites/${token}/preview`)
     .then((res) => res.data);
 }
 
@@ -238,24 +254,47 @@ export function revokePageInvite(
 
 export function acceptPageInvite(payload: { token: string }) {
   return apiClient
-    .post<{ workspaceId: string; pageId: string }>('/page-invites/accept', payload)
+    .post<AcceptPageInviteResponse>('/page-invites/accept', payload)
     .then((res) => res.data);
 }
 
-export function aiSummarize(payload: { text: string }) {
+export function getPageInvitePreview(token: string) {
   return apiClient
-    .post<{ result: string }>('/ai/summarize', payload)
+    .get<PageInvitePreview>(`/page-invites/${token}/preview`)
     .then((res) => res.data);
 }
 
-export function aiRefine(payload: { text: string }) {
+export function listPageAccessRequests(workspaceId: string, pageId: string) {
   return apiClient
-    .post<{ result: string }>('/ai/refine', payload)
+    .get<PageAccessRequest[]>(
+      `/workspaces/${workspaceId}/pages/${pageId}/access-requests`,
+    )
     .then((res) => res.data);
 }
 
-export function aiDraft(payload: { prompt: string }) {
+export function handlePageAccessRequest(
+  workspaceId: string,
+  pageId: string,
+  requestId: string,
+  action: 'APPROVE' | 'REJECT',
+) {
   return apiClient
-    .post<{ result: string }>('/ai/draft', payload)
+    .patch<{ ok: true }>(
+      `/workspaces/${workspaceId}/pages/${pageId}/access-requests/${requestId}`,
+      { action },
+    )
+    .then((res) => res.data);
+}
+
+export function getAiUsage() {
+  return apiClient.get<AiUsageSummary>('/ai/usage').then((res) => res.data);
+}
+
+export function aiAsk(
+  payload: { question: string },
+  options?: { signal?: AbortSignal },
+) {
+  return apiClient
+    .post<AiAskResponse>('/ai/ask', payload, { signal: options?.signal })
     .then((res) => res.data);
 }

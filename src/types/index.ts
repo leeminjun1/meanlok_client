@@ -1,6 +1,8 @@
 export type Role = 'OWNER' | 'EDITOR' | 'VIEWER';
 export type DocFormat = 'MARKDOWN' | 'HTML';
 export type PageRole = 'EDITOR' | 'VIEWER';
+export type LinkInviteMode = 'OPEN' | 'REQUEST';
+export type PageAccessRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
 export interface Profile {
   id: string;
@@ -12,6 +14,7 @@ export interface Workspace {
   id: string;
   name: string;
   ownerId: string;
+  linkInviteMode: LinkInviteMode;
   createdAt: string;
 }
 
@@ -57,6 +60,12 @@ export interface AcceptInviteResponse {
   workspaceId: string;
 }
 
+export interface InvitePreview {
+  workspaceId: string;
+  workspaceName: string;
+  role: Role;
+}
+
 export interface PageShare {
   id: string;
   role: PageRole;
@@ -81,12 +90,58 @@ export interface PageInviteSummary {
   inviter: Profile;
 }
 
+export interface PageInvitePreview {
+  pageId: string;
+  pageTitle: string;
+  workspaceId: string;
+  workspaceName: string;
+  role: PageRole;
+  linkInviteMode: LinkInviteMode;
+}
+
+export interface PageAccessRequest {
+  id: string;
+  role: PageRole;
+  status: PageAccessRequestStatus;
+  createdAt: string;
+  user: Profile;
+}
+
 export interface SharedPage {
   workspace: { id: string; name: string };
   page: { id: string; title: string; icon: string | null };
   role: PageRole;
   sharedBy: Profile | null;
   createdAt: string;
+}
+
+export interface AcceptPageInviteResponse {
+  workspaceId: string;
+  pageId: string;
+  status: 'granted' | 'requested';
+  requestId?: string;
+}
+
+export type AiErrorCode =
+  | 'QUOTA_EXCEEDED'
+  | 'RATE_LIMITED'
+  | 'INPUT_TOO_LONG'
+  | 'TIMEOUT'
+  | 'NETWORK'
+  | 'SERVER_ERROR'
+  | 'AI_PROVIDER_AUTH_FAILED'
+  | 'REQUEST_CANCELED';
+
+export interface AiUsageSummary {
+  usedToday: number;
+  dailyLimit: number;
+  remainingToday: number;
+  resetAt: string;
+}
+
+export interface AiAskResponse {
+  result: string;
+  usage: AiUsageSummary;
 }
 
 export type WorkspaceViewerRole = 'MEMBER' | 'GUEST';

@@ -6,14 +6,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   createInvite,
+  getWorkspace,
   listInvites,
   listMembers,
   removeMember,
   revokeInvite,
+  updateWorkspace,
   updateMemberRole,
 } from '@/lib/api/endpoints';
 import { getErrorMessage } from '@/lib/api/error';
-import type { Role } from '@/types';
+import { useSession } from '@/lib/auth/use-session';
+import type { LinkInviteMode, Role } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
@@ -21,8 +24,14 @@ export default function MembersPage() {
   const params = useParams<{ workspaceId: string }>();
   const workspaceId = params.workspaceId;
   const queryClient = useQueryClient();
+  const { user } = useSession();
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<Role>('VIEWER');
+
+  const workspaceQuery = useQuery({
+    queryKey: ['workspace', workspaceId],
+    queryFn: () => getWorkspace(workspaceId),
+  });
 
   const membersQuery = useQuery({
     queryKey: ['members', workspaceId],
@@ -72,8 +81,49 @@ export default function MembersPage() {
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  const linkInviteModeMutation = useMutation({
+    mutationFn: (mode: LinkInviteMode) =>
+      updateWorkspace(workspaceId, { linkInviteMode: mode }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] });
+      toast.success('링크 초대 정책을 저장했습니다.');
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const currentMember = (membersQuery.data ?? []).find((member) => member.userId === user?.id);
+  const canManageLinkInviteMode = currentMember?.role === 'OWNER';
+  const selectedLinkInviteMode = workspaceQuery.data?.linkInviteMode ?? 'OPEN';
+
   return (
     <section className="space-y-6">
+      <div className="rounded-lg border border-neutral-200 bg-white p-4">
+        <h2 className="mb-2 text-base font-semibold text-neutral-900">링크 초대 설정</h2>
+        <p className="mb-3 text-sm text-neutral-600">
+          링크를 받은 사용자를 즉시 접근시킬지, 권한 요청으로 보낼지 선택합니다.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className="h-10 rounded-md border border-neutral-300 bg-white px-2 text-sm"
+            value={selectedLinkInviteMode}
+            onChange={(event) =>
+              linkInviteModeMutation.mutate(event.target.value as LinkInviteMode)
+            }
+            disabled={
+              workspaceQuery.isLoading ||
+              linkInviteModeMutation.isPending ||
+              !canManageLinkInviteMode
+            }
+          >
+            <option value="OPEN">링크 보유 사용자 즉시 접근</option>
+            <option value="REQUEST">링크 보유 사용자 권한 요청</option>
+          </select>
+          {!canManageLinkInviteMode ? (
+            <p className="text-xs text-neutral-500">오너만 변경할 수 있습니다.</p>
+          ) : null}
+        </div>
+      </div>
+
       <div className="rounded-lg border border-neutral-200 bg-white p-4">
         <h2 className="mb-3 text-base font-semibold text-neutral-900">멤버 관리</h2>
         <div className="space-y-2">

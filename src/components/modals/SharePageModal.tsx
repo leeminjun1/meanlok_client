@@ -5,6 +5,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   addPageShare,
+  handlePageAccessRequest,
+  listPageAccessRequests,
   listPageInvites,
   listPageShares,
   removePageShare,
@@ -12,7 +14,12 @@ import {
   updatePageShare,
 } from '@/lib/api/endpoints';
 import { getErrorMessage } from '@/lib/api/error';
-import type { PageInviteSummary, PageRole, PageShare } from '@/types';
+import type {
+  PageAccessRequest,
+  PageInviteSummary,
+  PageRole,
+  PageShare,
+} from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -61,12 +68,21 @@ export function SharePageModal({
     enabled: open,
   });
 
+  const accessRequestsQuery = useQuery({
+    queryKey: ['page-access-requests', workspaceId, pageId],
+    queryFn: () => listPageAccessRequests(workspaceId, pageId),
+    enabled: open,
+  });
+
   const invalidateShareQueries = () => {
     void queryClient.invalidateQueries({
       queryKey: ['page-shares', workspaceId, pageId],
     });
     void queryClient.invalidateQueries({
       queryKey: ['page-invites', workspaceId, pageId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ['page-access-requests', workspaceId, pageId],
     });
     void queryClient.invalidateQueries({
       queryKey: ['pages', workspaceId],
@@ -138,6 +154,20 @@ export function SharePageModal({
     onSuccess: () => {
       invalidateShareQueries();
       toast.success('초대를 취소했습니다.');
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const handleAccessRequestMutation = useMutation({
+    mutationFn: (params: { requestId: string; action: 'APPROVE' | 'REJECT' }) =>
+      handlePageAccessRequest(workspaceId, pageId, params.requestId, params.action),
+    onSuccess: (_data, variables) => {
+      invalidateShareQueries();
+      toast.success(
+        variables.action === 'APPROVE'
+          ? '권한 요청을 승인했습니다.'
+          : '권한 요청을 거절했습니다.',
+      );
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
@@ -272,6 +302,56 @@ export function SharePageModal({
             ))}
             {(sharesQuery.data?.inherited?.length ?? 0) === 0 ? (
               <p className="text-xs text-neutral-500">상속된 공유가 없습니다.</p>
+            ) : null}
+          </div>
+        </section>
+
+        <section>
+          <p className="mb-2 font-medium text-neutral-800">권한 요청</p>
+          <div className="space-y-2">
+            {(accessRequestsQuery.data ?? []).map((request: PageAccessRequest) => (
+              <div
+                key={request.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-neutral-200 p-2"
+              >
+                <div>
+                  <p className="text-neutral-800">{request.user.name || request.user.email}</p>
+                  <p className="text-xs text-neutral-500">
+                    {request.user.email} / 요청 권한: {request.role} / 요청 시각:{' '}
+                    {new Date(request.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      handleAccessRequestMutation.mutate({
+                        requestId: request.id,
+                        action: 'REJECT',
+                      })
+                    }
+                    disabled={handleAccessRequestMutation.isPending}
+                  >
+                    거절
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      handleAccessRequestMutation.mutate({
+                        requestId: request.id,
+                        action: 'APPROVE',
+                      })
+                    }
+                    disabled={handleAccessRequestMutation.isPending}
+                  >
+                    승인
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {(accessRequestsQuery.data?.length ?? 0) === 0 ? (
+              <p className="text-xs text-neutral-500">대기 중인 권한 요청이 없습니다.</p>
             ) : null}
           </div>
         </section>
