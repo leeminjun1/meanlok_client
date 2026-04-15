@@ -15,6 +15,11 @@ function normalizeMessage(message: unknown): string | null {
 
 export function getErrorMessage(error: unknown): string {
   if (isAxiosError(error)) {
+    const status = error.response?.status;
+    if (typeof status === 'number' && status >= 500) {
+      return '잠시 후 다시 시도해 주세요';
+    }
+
     const payload = error.response?.data as
       | {
           message?: unknown;

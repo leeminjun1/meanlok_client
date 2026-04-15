@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { getPage, upsertDocument } from '@/lib/api/endpoints';
-import type { DocFormat } from '@/types';
+import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { getPage, uploadDocumentImage, upsertDocument } from '@/lib/api/endpoints';
+import type { DocFormat, DocumentDelta } from '@/types';
+import { toast } from 'sonner';
+import { getErrorMessage } from '@/lib/api/error';
 import { MarkdownView } from '@/components/editor/MarkdownView';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -15,6 +17,87 @@ type EditorTab = 'rich' | 'markdown' | 'preview';
 type EditorMode = 'view' | 'edit';
 type SaveState = 'idle' | 'saving' | 'saved';
 type Draft = { body: string; format: DocFormat };
+type SavePayload = {
+  format: DocFormat;
+  expectedVersion?: number;
+  body?: string;
+  delta?: DocumentDelta;
+};
+
+function toSingleDelta(before: string, after: string): DocumentDelta | null {
+  if (before === after) {
+    return null;
+  }
+
+  const shortestLength = Math.min(before.length, after.length);
+  let start = 0;
+  while (start < shortestLength && before[start] === after[start]) {
+    start += 1;
+  }
+
+  let beforeEnd = before.length - 1;
+  let afterEnd = after.length - 1;
+  while (
+    beforeEnd >= start &&
+    afterEnd >= start &&
+    before[beforeEnd] === after[afterEnd]
+  ) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+
+  return {
+    start,
+    deleteCount: Math.max(0, beforeEnd - start + 1),
+    insertText: after.slice(start, afterEnd + 1),
+  };
+}
+
+function buildSavePayload(
+  latest: Draft,
+  lastSaved: Draft,
+  expectedVersion: number,
+): SavePayload {
+  if (latest.format === lastSaved.format) {
+    const delta = toSingleDelta(lastSaved.body, latest.body);
+    if (delta) {
+      const fullBodyCost = latest.body.length;
+      const deltaCost = delta.insertText.length + 48;
+      if (deltaCost + 24 < fullBodyCost) {
+        return {
+          format: latest.format,
+          expectedVersion,
+          delta,
+        };
+      }
+    }
+  }
+
+  return {
+    format: latest.format,
+    expectedVersion,
+    body: latest.body,
+  };
+}
+
+function mergeDocumentIntoPageCache(
+  currentPage: any,
+  nextDocument: { body: string; format: DocFormat; version?: number },
+) {
+  if (!currentPage) {
+    return currentPage;
+  }
+
+  return {
+    ...currentPage,
+    document: {
+      ...(currentPage.document ?? {}),
+      body: nextDocument.body,
+      format: nextDocument.format,
+      version: nextDocument.version ?? currentPage.document?.version ?? 1,
+    },
+  };
+}
 
 interface HybridEditorProps {
   workspaceId: string;
@@ -27,6 +110,7 @@ interface HybridEditorContentProps {
   pageId: string;
   initialBody: string;
   initialFormat: DocFormat;
+  initialVersion: number;
   readOnly: boolean;
   mode: EditorMode;
 }
@@ -50,27 +134,116 @@ function HybridEditorContent({
   pageId,
   initialBody,
   initialFormat,
+  initialVersion,
   readOnly,
   mode,
 }: HybridEditorContentProps) {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<EditorTab>('rich');
   const [format, setFormat] = useState<DocFormat>(initialFormat);
   const [body, setBody] = useState(initialBody);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const initializedRef = useRef(false);
   const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const latestDraftRef = useRef<Draft>({ body: initialBody, format: initialFormat });
   const lastSavedDraftRef = useRef<Draft>({ body: initialBody, format: initialFormat });
+  const lastSavedVersionRef = useRef(initialVersion);
+  const savingRef = useRef(false);
+  const saveRequestedRef = useRef(false);
 
   const saveMutation = useMutation({
-    mutationFn: (payload: { body: string; format: DocFormat }) =>
-      upsertDocument(workspaceId, pageId, payload),
-    onSuccess: (_data, variables) => {
-      lastSavedDraftRef.current = variables;
-      setSaveState('saved');
-    },
+    mutationFn: (payload: SavePayload) => upsertDocument(workspaceId, pageId, payload),
   });
-  const mutate = saveMutation.mutate;
+
+  const imageUploadMutation = useMutation({
+    mutationFn: (file: File) => uploadDocumentImage(workspaceId, pageId, file),
+  });
+
+  const flushDraft = async () => {
+    if (readOnly) {
+      return;
+    }
+
+    saveRequestedRef.current = true;
+    if (savingRef.current) {
+      return;
+    }
+
+    savingRef.current = true;
+
+    try {
+      while (saveRequestedRef.current) {
+        saveRequestedRef.current = false;
+        const latest = latestDraftRef.current;
+        const lastSaved = lastSavedDraftRef.current;
+
+        if (latest.body === lastSaved.body && latest.format === lastSaved.format) {
+          continue;
+        }
+
+        setSaveState('saving');
+
+        try {
+          const saved = await saveMutation.mutateAsync(
+            buildSavePayload(latest, lastSaved, lastSavedVersionRef.current),
+          );
+
+          lastSavedVersionRef.current = saved?.version ?? lastSavedVersionRef.current + 1;
+          const normalizedSaved: Draft = {
+            body: saved?.body ?? latest.body,
+            format: saved?.format ?? latest.format,
+          };
+          lastSavedDraftRef.current = normalizedSaved;
+          queryClient.setQueryData(['page', workspaceId, pageId], (current: any) =>
+            mergeDocumentIntoPageCache(current, {
+              body: normalizedSaved.body,
+              format: normalizedSaved.format,
+              version: saved?.version,
+            }),
+          );
+          void queryClient.invalidateQueries({ queryKey: ['page-meta', workspaceId, pageId] });
+
+          const currentLatest = latestDraftRef.current;
+          if (
+            currentLatest.body === latest.body &&
+            currentLatest.format === latest.format
+          ) {
+            latestDraftRef.current = normalizedSaved;
+            setBody(normalizedSaved.body);
+            setFormat(normalizedSaved.format);
+          }
+
+          setSaveState('saved');
+        } catch (error) {
+          setSaveState('idle');
+          const payload = (error as any)?.response?.data as
+            | { error?: { code?: string; latestVersion?: number } }
+            | undefined;
+
+          if (payload?.error?.code === 'VERSION_CONFLICT') {
+            if (typeof payload.error.latestVersion === 'number') {
+              lastSavedVersionRef.current = payload.error.latestVersion;
+            }
+            toast.error(
+              '다른 기기에서 먼저 저장됐어요. 최신 버전 기준으로 다시 저장을 시도합니다.',
+            );
+            saveRequestedRef.current = true;
+            continue;
+          }
+
+          toast.error(getErrorMessage(error));
+          break;
+        }
+      }
+    } finally {
+      savingRef.current = false;
+    }
+  };
+
+  const handleBlurSave = () => {
+    void flushDraft();
+  };
 
   useEffect(() => {
     latestDraftRef.current = { body, format };
@@ -87,13 +260,13 @@ function HybridEditorContent({
     }
 
     const timer = window.setTimeout(() => {
-      mutate({ body, format });
-    }, 800);
+      void flushDraft();
+    }, 2500);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [body, format, mutate, readOnly]);
+  }, [body, format, readOnly]);
 
   useEffect(() => {
     return () => {
@@ -111,9 +284,22 @@ function HybridEditorContent({
       }
 
       // Flush unsaved draft when navigating away quickly before debounce fires.
-      void upsertDocument(workspaceId, pageId, latest);
+      void upsertDocument(workspaceId, pageId, {
+        ...buildSavePayload(latest, lastSaved, lastSavedVersionRef.current),
+      }).then((saved) => {
+        if (!saved) {
+          return;
+        }
+        queryClient.setQueryData(['page', workspaceId, pageId], (current: any) =>
+          mergeDocumentIntoPageCache(current, {
+            body: saved.body,
+            format: saved.format,
+            version: saved.version,
+          }),
+        );
+      });
     };
-  }, [pageId, readOnly, workspaceId]);
+  }, [pageId, queryClient, readOnly, workspaceId]);
 
   const onChangeBody = (next: string) => {
     if (readOnly) {
@@ -143,28 +329,26 @@ function HybridEditorContent({
 
   const saveLabel = readOnly
     ? '읽기 전용'
+    : imageUploadMutation.isPending
+      ? '이미지 업로드 중...'
     : saveMutation.isPending || saveState === 'saving'
       ? '저장 중...'
       : saveState === 'saved'
         ? '저장됨'
         : '초기 상태';
 
-  const replaceSelection = (
+  const insertAtSelection = (
     nextSelection: string,
     selectionStartOffset = 0,
     selectionEndOffset = 0,
   ) => {
-    if (readOnly || format !== 'MARKDOWN') {
+    if (readOnly) {
       return;
     }
 
     const textarea = editorTextareaRef.current;
-    if (!textarea) {
-      return;
-    }
-
-    const start = textarea.selectionStart ?? body.length;
-    const end = textarea.selectionEnd ?? body.length;
+    const start = textarea?.selectionStart ?? body.length;
+    const end = textarea?.selectionEnd ?? body.length;
     const next =
       body.slice(0, start) + nextSelection + body.slice(end);
 
@@ -202,7 +386,7 @@ function HybridEditorContent({
     const prefixLength = prefix.length;
     const selectionLength = content.length;
 
-    replaceSelection(nextSelection, prefixLength, prefixLength + selectionLength);
+    insertAtSelection(nextSelection, prefixLength, prefixLength + selectionLength);
   };
 
   const insertLinePrefix = (prefix: string, placeholder: string) => {
@@ -213,7 +397,82 @@ function HybridEditorContent({
     const table = `| 열1 | 열2 |
 | --- | --- |
 | 값1 | 값2 |`;
-    replaceSelection(table, 0, table.length);
+    insertAtSelection(table, 0, table.length);
+  };
+
+  const insertImageSnippet = (imageUrl: string) => {
+    const snippet =
+      format === 'MARKDOWN'
+        ? `![이미지](${imageUrl})`
+        : `<img src="${imageUrl}" alt="이미지" />`;
+
+    insertAtSelection(snippet, snippet.length, snippet.length);
+    toast.success('이미지를 삽입했어요.');
+  };
+
+  const triggerImageFilePicker = () => {
+    if (readOnly || imageUploadMutation.isPending) {
+      return;
+    }
+
+    imageInputRef.current?.click();
+  };
+
+  const onSelectImageFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    imageUploadMutation.mutate(file, {
+      onSuccess: (response) => {
+        insertImageSnippet(response.url);
+        queryClient.setQueryData(['page', workspaceId, pageId], (current: any) =>
+          mergeDocumentIntoPageCache(current, {
+            body: latestDraftRef.current.body,
+            format: latestDraftRef.current.format,
+          }),
+        );
+      },
+      onError: (error) => {
+        toast.error(getErrorMessage(error));
+      },
+    });
+  };
+
+  const onPasteImage = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly || imageUploadMutation.isPending) {
+      return;
+    }
+
+    const items = event.clipboardData?.items;
+    if (!items) {
+      return;
+    }
+
+    for (const item of items) {
+      if (item.kind !== 'file' || !item.type.startsWith('image/')) {
+        continue;
+      }
+
+      const file = item.getAsFile();
+      if (!file) {
+        continue;
+      }
+
+      event.preventDefault();
+      imageUploadMutation.mutate(file, {
+        onSuccess: (response) => {
+          insertImageSnippet(response.url);
+        },
+        onError: (error) => {
+          toast.error(getErrorMessage(error));
+        },
+      });
+      break;
+    }
   };
 
   const showMarkdownToolbar =
@@ -261,10 +520,20 @@ function HybridEditorContent({
         </div>
 
         <div className="flex items-center gap-2 text-sm">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={triggerImageFilePicker}
+            disabled={readOnly || imageUploadMutation.isPending}
+          >
+            이미지
+          </Button>
           <select
             className="h-9 rounded-md border border-neutral-300 bg-white px-2"
             value={format}
             onChange={(event) => onChangeFormat(event.target.value as DocFormat)}
+            onBlur={handleBlurSave}
             disabled={readOnly}
           >
             <option value="MARKDOWN">Markdown</option>
@@ -275,6 +544,14 @@ function HybridEditorContent({
           </span>
         </div>
       </div>
+
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        className="hidden"
+        onChange={onSelectImageFile}
+      />
 
       {showMarkdownToolbar ? (
         <div className="flex flex-wrap gap-1 rounded-md border border-neutral-300 bg-neutral-50 p-2">
@@ -320,14 +597,19 @@ function HybridEditorContent({
             className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
             value={body}
             onChange={(event) => onChangeBody(event.target.value)}
+            onBlur={handleBlurSave}
+            onPaste={onPasteImage}
             placeholder="Markdown으로 작성하세요."
             readOnly={readOnly}
           />
         ) : (
           <textarea
+            ref={editorTextareaRef}
             className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
             value={body}
             onChange={(event) => onChangeBody(event.target.value)}
+            onBlur={handleBlurSave}
+            onPaste={onPasteImage}
             placeholder="HTML 소스를 작성하세요."
             readOnly={readOnly}
           />
@@ -336,10 +618,12 @@ function HybridEditorContent({
 
       {activeTab === 'markdown' ? (
         <textarea
-          ref={format === 'MARKDOWN' ? editorTextareaRef : undefined}
+          ref={editorTextareaRef}
           className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
           value={body}
           onChange={(event) => onChangeBody(event.target.value)}
+          onBlur={handleBlurSave}
+          onPaste={onPasteImage}
           placeholder="소스를 편집하세요."
           readOnly={readOnly}
         />
@@ -358,6 +642,7 @@ export function HybridEditor({ workspaceId, pageId, mode = 'edit' }: HybridEdito
   const pageQuery = useQuery({
     queryKey: ['page', workspaceId, pageId],
     queryFn: () => getPage(workspaceId, pageId),
+    staleTime: 15 * 1000,
   });
 
   if (pageQuery.isLoading) {
@@ -372,6 +657,7 @@ export function HybridEditor({ workspaceId, pageId, mode = 'edit' }: HybridEdito
   const initialBody = pageQuery.data?.document?.body ?? '';
   const rawFormat = pageQuery.data?.document?.format;
   const initialFormat: DocFormat = rawFormat === 'HTML' ? 'HTML' : 'MARKDOWN';
+  const initialVersion = pageQuery.data?.document?.version ?? 1;
   const readOnly = pageQuery.data?.accessRole !== 'EDITOR';
   const effectiveMode: EditorMode = readOnly ? 'view' : mode;
 
@@ -382,6 +668,7 @@ export function HybridEditor({ workspaceId, pageId, mode = 'edit' }: HybridEdito
       pageId={pageId}
       initialBody={initialBody}
       initialFormat={initialFormat}
+      initialVersion={initialVersion}
       readOnly={readOnly}
       mode={effectiveMode}
     />

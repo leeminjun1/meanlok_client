@@ -13,17 +13,27 @@ export default function DashboardPage() {
   const workspacesQuery = useQuery({
     queryKey: ['workspaces'],
     queryFn: listWorkspaces,
+    staleTime: 60 * 1000,
   });
   const sharedPagesQuery = useQuery({
     queryKey: ['shared-pages'],
     queryFn: listSharedPages,
+    staleTime: 60 * 1000,
   });
 
   return (
     <section className="mx-auto w-full max-w-5xl px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-neutral-900">내 워크스페이스</h1>
-        <Button onClick={() => setCreateOpen(true)}>새 워크스페이스</Button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/ops/metrics"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-300 bg-white px-4 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+          >
+            운영 지표
+          </Link>
+          <Button onClick={() => setCreateOpen(true)}>새 워크스페이스</Button>
+        </div>
       </div>
 
       {workspacesQuery.isLoading ? (

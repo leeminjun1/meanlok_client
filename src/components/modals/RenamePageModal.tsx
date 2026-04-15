@@ -32,6 +32,7 @@ export function RenamePageModal({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['pages', workspaceId] });
       void queryClient.invalidateQueries({ queryKey: ['page', workspaceId, pageId] });
+      void queryClient.invalidateQueries({ queryKey: ['page-meta', workspaceId, pageId] });
       toast.success('페이지 이름을 바꿨습니다.');
       onClose();
     },

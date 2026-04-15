@@ -17,10 +17,12 @@ export default function WorkspaceHomePage() {
   const workspaceQuery = useQuery({
     queryKey: ['workspace-public-info', workspaceId],
     queryFn: () => getWorkspacePublicInfo(workspaceId),
+    staleTime: 2 * 60 * 1000,
   });
   const pagesQuery = useQuery({
     queryKey: ['pages', workspaceId],
     queryFn: () => listPages(workspaceId),
+    staleTime: 60 * 1000,
   });
 
   const createPageMutation = useMutation({

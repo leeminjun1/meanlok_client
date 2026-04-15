@@ -40,7 +40,23 @@ export interface PageDetail extends PageNode {
   document?: {
     body: string;
     format: DocFormat;
+    version: number;
   } | null;
+}
+
+export interface DocumentDelta {
+  start: number;
+  deleteCount: number;
+  insertText: string;
+}
+
+export interface PageMeta {
+  id: string;
+  workspaceId: string;
+  title: string;
+  icon: string | null;
+  updatedAt: string;
+  accessRole: PageRole;
 }
 
 export interface Invite {
@@ -150,4 +166,48 @@ export interface PageListResponse {
   pages: PageNode[];
   viewerRole: WorkspaceViewerRole;
   memberRole: Role | null;
+}
+
+export interface OpsRouteMetric {
+  route: string;
+  count: number;
+  p95Ms: number;
+  errorRatePct: number;
+}
+
+export interface OpsErrorMetric {
+  code: string;
+  count: number;
+}
+
+export interface OpsMetricsSnapshot {
+  generatedAt: string;
+  windowMinutes: number;
+  uptimeSec: number;
+  http: {
+    total: number;
+    p95Ms: number;
+    routes: OpsRouteMetric[];
+  };
+  documentSaves: {
+    total: number;
+    failed: number;
+    failureRatePct: number;
+    p95Ms: number;
+  };
+  ai: {
+    total: number;
+    failed: number;
+    errorRatePct: number;
+    p95Ms: number;
+    errorsByCode: OpsErrorMetric[];
+  };
+}
+
+export interface DocumentImageUploadResponse {
+  url: string;
+  path: string;
+  bucket: string;
+  contentType: string;
+  size: number;
 }

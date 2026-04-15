@@ -5,6 +5,7 @@ import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 
 const HeaderAsCell = TableHeader.extend({
@@ -30,6 +31,7 @@ const HeaderAsCell = TableHeader.extend({
 
 const EDITOR_CLASS_NAME =
   'min-h-[280px] rounded-b-md border border-t-0 border-neutral-300 p-4 text-sm focus:outline-none';
+const SAFE_LINK_PATTERN = /^(?:https?:\/\/|mailto:|#|\/)/i;
 
 interface RichEditorProps {
   value: string;
@@ -76,6 +78,7 @@ export function RichEditor({ value, onChange, editable = true }: RichEditorProps
       StarterKit,
       Link.configure({
         openOnClick: false,
+        validate: (href) => SAFE_LINK_PATTERN.test(href),
       }),
       Table.configure({
         resizable: true,
@@ -200,6 +203,11 @@ export function RichEditor({ value, onChange, editable = true }: RichEditorProps
 
             if (!url) {
               editor.chain().focus().unsetLink().run();
+              return;
+            }
+
+            if (!SAFE_LINK_PATTERN.test(url)) {
+              toast.error('허용되지 않은 링크 형식입니다.');
               return;
             }
 

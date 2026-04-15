@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { getPage, getWorkspacePublicInfo } from '@/lib/api/endpoints';
+import { getPageMeta, getWorkspacePublicInfo } from '@/lib/api/endpoints';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 export function Breadcrumb() {
@@ -15,12 +15,14 @@ export function Breadcrumb() {
     queryKey: ['workspace-public-info', workspaceId],
     queryFn: () => getWorkspacePublicInfo(workspaceId as string),
     enabled: Boolean(workspaceId),
+    staleTime: 2 * 60 * 1000,
   });
 
   const pageQuery = useQuery({
-    queryKey: ['page', workspaceId, pageId],
-    queryFn: () => getPage(workspaceId as string, pageId as string),
+    queryKey: ['page-meta', workspaceId, pageId],
+    queryFn: () => getPageMeta(workspaceId as string, pageId as string),
     enabled: Boolean(workspaceId && pageId),
+    staleTime: 30 * 1000,
   });
 
   if (workspaceQuery.isLoading || (pageId && pageQuery.isLoading)) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useMemo } from 'react';
+import { Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
@@ -18,10 +18,13 @@ const loginSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 
+const isSafePath = (p: string | null | undefined) => !!p && /^\/(?!\/)/.test(p);
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = useMemo(() => searchParams.get('next') || '/dashboard', [searchParams]);
+  const rawNext = searchParams.get('next');
+  const nextPath = isSafePath(rawNext) ? rawNext! : '/dashboard';
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -33,8 +36,6 @@ function LoginForm() {
 
   const onSubmit = form.handleSubmit(async (values) => {
     const result = await supabase.auth.signInWithPassword(values);
-    // DEBUG: 로그인 결과 확인용
-    console.log('[login] signInWithPassword result:', result);
 
     if (result.error) {
       toast.error(result.error.message);

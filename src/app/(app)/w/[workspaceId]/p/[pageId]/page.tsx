@@ -1,14 +1,48 @@
 'use client';
 
 import { Eye, Pencil } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getPage } from '@/lib/api/endpoints';
-import { HybridEditor } from '@/components/editor/HybridEditor';
-import { AIPanel } from '@/components/ai/AIPanel';
+import { getPageMeta } from '@/lib/api/endpoints';
 import { SharePageModal } from '@/components/modals/SharePageModal';
 import { Button } from '@/components/ui/Button';
+import { Skeleton } from '@/components/ui/Skeleton';
+
+const HybridEditor = dynamic(
+  () => import('@/components/editor/HybridEditor').then((module) => module.HybridEditor),
+  {
+    loading: () => (
+      <div className="space-y-3">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-80 w-full" />
+      </div>
+    ),
+  },
+);
+
+const PageDocumentPreview = dynamic(
+  () =>
+    import('@/components/editor/PageDocumentPreview').then(
+      (module) => module.PageDocumentPreview,
+    ),
+  {
+    loading: () => (
+      <div className="space-y-3">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-80 w-full" />
+      </div>
+    ),
+  },
+);
+
+const AIPanel = dynamic(
+  () => import('@/components/ai/AIPanel').then((module) => module.AIPanel),
+  {
+    loading: () => <div className="w-[340px] border-l border-neutral-200 bg-white" />,
+  },
+);
 
 export default function PageEditorPage() {
   const params = useParams<{ workspaceId: string; pageId: string }>();
@@ -20,8 +54,9 @@ export default function PageEditorPage() {
   const [shareOpen, setShareOpen] = useState(false);
 
   const pageQuery = useQuery({
-    queryKey: ['page', workspaceId, pageId],
-    queryFn: () => getPage(workspaceId, pageId),
+    queryKey: ['page-meta', workspaceId, pageId],
+    queryFn: () => getPageMeta(workspaceId, pageId),
+    staleTime: 30 * 1000,
   });
   const canEdit = pageQuery.data?.accessRole === 'EDITOR';
   const canShare = canEdit;
@@ -69,7 +104,11 @@ export default function PageEditorPage() {
       </div>
       <div className="flex h-full rounded-lg border border-neutral-200 bg-white">
         <div className="min-w-0 flex-1 p-4">
-          <HybridEditor workspaceId={workspaceId} pageId={pageId} mode={editorMode} />
+          {editorMode === 'edit' ? (
+            <HybridEditor workspaceId={workspaceId} pageId={pageId} mode="edit" />
+          ) : (
+            <PageDocumentPreview workspaceId={workspaceId} pageId={pageId} />
+          )}
         </div>
         {editorMode === 'edit' ? <AIPanel /> : null}
       </div>

@@ -8,9 +8,27 @@ export const apiClient = axios.create({
   baseURL,
 });
 
-apiClient.interceptors.request.use(async (config) => {
+let cachedAccessToken: string | null = null;
+let isTokenHydrated = false;
+
+supabase.auth.onAuthStateChange((_event, session) => {
+  cachedAccessToken = session?.access_token ?? null;
+  isTokenHydrated = true;
+});
+
+async function getAccessToken() {
+  if (isTokenHydrated) {
+    return cachedAccessToken;
+  }
+
   const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  cachedAccessToken = data.session?.access_token ?? null;
+  isTokenHydrated = true;
+  return cachedAccessToken;
+}
+
+apiClient.interceptors.request.use(async (config) => {
+  const token = await getAccessToken();
 
   if (token) {
     config.headers = config.headers ?? {};
@@ -24,6 +42,8 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error?.response?.status === 401) {
+      cachedAccessToken = null;
+      isTokenHydrated = true;
       await supabase.auth.signOut();
 
       if (typeof window !== 'undefined') {

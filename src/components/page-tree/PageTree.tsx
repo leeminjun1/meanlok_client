@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -64,6 +64,21 @@ function buildTree(nodes: PageNode[]): TreeNodeData[] {
   return roots;
 }
 
+function findPathToNode(nodes: TreeNodeData[], targetId: string): string[] | null {
+  for (const node of nodes) {
+    if (node.id === targetId) {
+      return [node.id];
+    }
+
+    const childPath = findPathToNode(node.children, targetId);
+    if (childPath) {
+      return [node.id, ...childPath];
+    }
+  }
+
+  return null;
+}
+
 interface TreeNodeProps {
   workspaceId: string;
   node: TreeNodeData;
@@ -92,7 +107,7 @@ function TreeNode({
   onDelete,
 }: TreeNodeProps) {
   const hasChildren = node.children.length > 0;
-  const isExpanded = expanded[node.id] ?? true;
+  const isExpanded = expanded[node.id] ?? depth === 0;
   const href = `/w/${workspaceId}/p/${node.id}`;
   const isActive = pathname === href;
 
@@ -188,6 +203,7 @@ export function PageTree({ workspaceId }: PageTreeProps) {
   const pagesQuery = useQuery({
     queryKey: ['pages', workspaceId],
     queryFn: () => listPages(workspaceId),
+    staleTime: 60 * 1000,
   });
 
   const createMutation = useMutation({
@@ -219,6 +235,34 @@ export function PageTree({ workspaceId }: PageTreeProps) {
     () => buildTree(pagesQuery.data?.pages ?? []),
     [pagesQuery.data],
   );
+
+  useEffect(() => {
+    const match = pathname.match(/\/p\/([^/?#]+)/);
+    const activePageId = match?.[1];
+
+    if (!activePageId) {
+      return;
+    }
+
+    const pathIds = findPathToNode(tree, activePageId);
+    if (!pathIds) {
+      return;
+    }
+
+    setExpanded((prev) => {
+      const next = { ...prev };
+      let changed = false;
+
+      for (const id of pathIds) {
+        if (!(id in next)) {
+          next[id] = true;
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [pathname, tree]);
 
   const canCreateRoot =
     pagesQuery.data?.viewerRole === 'MEMBER' &&

@@ -5,6 +5,8 @@ import type {
   AcceptPageInviteResponse,
   AcceptInviteResponse,
   AuthMeResponse,
+  DocumentImageUploadResponse,
+  DocumentDelta,
   DocFormat,
   InheritedShare,
   Invite,
@@ -13,11 +15,13 @@ import type {
   Member,
   PageAccessRequest,
   PageDetail,
+  PageMeta,
   PageInvitePreview,
   PageInviteSummary,
   PageListResponse,
   PageRole,
   PageShare,
+  OpsMetricsSnapshot,
   Role,
   SharedPage,
   Workspace,
@@ -131,6 +135,12 @@ export function getPage(workspaceId: string, pageId: string) {
     .then((res) => res.data);
 }
 
+export function getPageMeta(workspaceId: string, pageId: string) {
+  return apiClient
+    .get<PageMeta>(`/workspaces/${workspaceId}/pages/${pageId}/meta`)
+    .then((res) => res.data);
+}
+
 export function createPage(
   workspaceId: string,
   payload: { title: string; parentId?: string; icon?: string },
@@ -184,12 +194,38 @@ export function movePage(
 export function upsertDocument(
   workspaceId: string,
   pageId: string,
-  payload: { body: string; format: DocFormat },
+  payload: {
+    format: DocFormat;
+    expectedVersion?: number;
+    body?: string;
+    delta?: DocumentDelta;
+  },
 ) {
   return apiClient
     .put<PageDetail['document']>(
       `/workspaces/${workspaceId}/pages/${pageId}/document`,
       payload,
+    )
+    .then((res) => res.data);
+}
+
+export function uploadDocumentImage(
+  workspaceId: string,
+  pageId: string,
+  file: File,
+) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return apiClient
+    .post<DocumentImageUploadResponse>(
+      `/workspaces/${workspaceId}/pages/${pageId}/document/images`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      },
     )
     .then((res) => res.data);
 }
@@ -297,4 +333,8 @@ export function aiAsk(
   return apiClient
     .post<AiAskResponse>('/ai/ask', payload, { signal: options?.signal })
     .then((res) => res.data);
+}
+
+export function getOpsMetrics() {
+  return apiClient.get<OpsMetricsSnapshot>('/ops/metrics').then((res) => res.data);
 }
