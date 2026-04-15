@@ -206,6 +206,7 @@ export interface OpsMetricsSnapshot {
 
 export interface DocumentImageUploadResponse {
   url: string;
+  ref?: string;
   path: string;
   bucket: string;
   contentType: string;

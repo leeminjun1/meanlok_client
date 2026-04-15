@@ -26,6 +26,10 @@ export default function WorkspaceLayout({
     queryKey: ['pages', workspaceId],
     queryFn: () => listPages(workspaceId),
     staleTime: 60 * 1000,
+    select: (data) => ({
+      viewerRole: data.viewerRole,
+      memberRole: data.memberRole,
+    }),
   });
 
   return (

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 
 interface MenuItem {
@@ -15,65 +16,112 @@ interface DropdownMenuProps {
   align?: 'left' | 'right';
 }
 
+const DROPDOWN_ESTIMATED_HEIGHT = 160;
+const DROPDOWN_WIDTH = 128;
+
+interface MenuPosition {
+  top?: number;
+  bottom?: number;
+  left?: number;
+  right?: number;
+}
+
 export function DropdownMenu({
   trigger,
   items,
   align = 'right',
 }: DropdownMenuProps) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<MenuPosition>({});
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) {
       return;
     }
 
-    const onClick = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        !triggerRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
         setOpen(false);
       }
     };
 
-    document.addEventListener('mousedown', onClick);
+    document.addEventListener('pointerdown', onPointerDown);
     return () => {
-      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('pointerdown', onPointerDown);
     };
   }, [open]);
 
+  const handleOpen = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUpward = spaceBelow < DROPDOWN_ESTIMATED_HEIGHT;
+
+      const pos: MenuPosition = {};
+      if (openUpward) {
+        pos.bottom = window.innerHeight - rect.top;
+      } else {
+        pos.top = rect.bottom + 4;
+      }
+
+      if (align === 'right') {
+        pos.right = window.innerWidth - rect.right;
+      } else {
+        pos.left = rect.left;
+      }
+
+      setMenuPos(pos);
+    }
+    setOpen((prev) => !prev);
+  };
+
   return (
-    <div className="relative" ref={rootRef}>
+    <>
       <button
+        ref={triggerRef}
         type="button"
         className="rounded p-1 hover:bg-neutral-100"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={handleOpen}
       >
         {trigger}
       </button>
-      {open ? (
-        <div
-          className={cn(
-            'absolute z-20 mt-1 min-w-32 rounded-md border border-neutral-200 bg-white p-1 shadow-md',
-            align === 'right' ? 'right-0' : 'left-0',
-          )}
-        >
-          {items.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => {
-                item.onClick();
-                setOpen(false);
+      {open
+        ? createPortal(
+            <div
+              ref={menuRef}
+              style={{
+                position: 'fixed',
+                minWidth: `${DROPDOWN_WIDTH}px`,
+                ...menuPos,
               }}
-              className={cn(
-                'w-full rounded px-2 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100',
-                item.className,
-              )}
+              className="z-50 rounded-md border border-neutral-200 bg-white p-1 shadow-md"
             >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
+              {items.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => {
+                    item.onClick();
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    'w-full rounded px-2 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100',
+                    item.className,
+                  )}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }

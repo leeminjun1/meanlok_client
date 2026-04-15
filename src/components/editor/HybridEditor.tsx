@@ -2,14 +2,27 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getPage, uploadDocumentImage, upsertDocument } from '@/lib/api/endpoints';
+import {
+  createPage,
+  getPage,
+  uploadDocumentImage,
+  upsertDocument,
+} from '@/lib/api/endpoints';
 import type { DocFormat, DocumentDelta } from '@/types';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/lib/api/error';
 import { MarkdownView } from '@/components/editor/MarkdownView';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { convertBody } from '@/lib/editor/format-convert';
+import { optimizeHtmlImageTagsForPreview } from '@/lib/editor/image-html';
+import {
+  buildStoredImageReference,
+  resolveStoredImageReferences,
+} from '@/lib/editor/image-ref';
+import { optimizeImageForUpload } from '@/lib/editor/image-upload';
 import { sanitizeHtml } from '@/lib/sanitize';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +36,9 @@ type SavePayload = {
   body?: string;
   delta?: DocumentDelta;
 };
+
+const AUTO_SAVE_DEBOUNCE_MS = 3500;
+const DEFAULT_SUBPAGE_TITLE = '새 하위 페이지';
 
 function toSingleDelta(before: string, after: string): DocumentDelta | null {
   if (before === after) {
@@ -116,8 +132,11 @@ interface HybridEditorContentProps {
 }
 
 function DocumentPreview({ body, format }: { body: string; format: DocFormat }) {
+  const normalizedBody = resolveStoredImageReferences(body);
   if (format === 'HTML') {
-    const clean = sanitizeHtml(body);
+    const clean = sanitizeHtml(
+      optimizeHtmlImageTagsForPreview(normalizedBody),
+    );
     return (
       <div
         className="prose prose-sm max-w-none text-neutral-800"
@@ -126,7 +145,7 @@ function DocumentPreview({ body, format }: { body: string; format: DocFormat }) 
     );
   }
 
-  return <MarkdownView body={body} />;
+  return <MarkdownView body={normalizedBody} />;
 }
 
 function HybridEditorContent({
@@ -142,10 +161,14 @@ function HybridEditorContent({
   const [activeTab, setActiveTab] = useState<EditorTab>('rich');
   const [format, setFormat] = useState<DocFormat>(initialFormat);
   const [body, setBody] = useState(initialBody);
+  const [optimizingImage, setOptimizingImage] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [createSubpageModalOpen, setCreateSubpageModalOpen] = useState(false);
+  const [nextSubpageTitle, setNextSubpageTitle] = useState(DEFAULT_SUBPAGE_TITLE);
   const initializedRef = useRef(false);
   const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const subpageTitleInputRef = useRef<HTMLInputElement | null>(null);
   const latestDraftRef = useRef<Draft>({ body: initialBody, format: initialFormat });
   const lastSavedDraftRef = useRef<Draft>({ body: initialBody, format: initialFormat });
   const lastSavedVersionRef = useRef(initialVersion);
@@ -158,6 +181,13 @@ function HybridEditorContent({
 
   const imageUploadMutation = useMutation({
     mutationFn: (file: File) => uploadDocumentImage(workspaceId, pageId, file),
+  });
+  const createSubpageMutation = useMutation({
+    mutationFn: (title: string) =>
+      createPage(workspaceId, {
+        title,
+        parentId: pageId,
+      }),
   });
 
   const flushDraft = async () => {
@@ -202,7 +232,15 @@ function HybridEditorContent({
               version: saved?.version,
             }),
           );
-          void queryClient.invalidateQueries({ queryKey: ['page-meta', workspaceId, pageId] });
+          queryClient.setQueryData(['page-meta', workspaceId, pageId], (current: any) => {
+            if (!current) {
+              return current;
+            }
+            return {
+              ...current,
+              updatedAt: new Date().toISOString(),
+            };
+          });
 
           const currentLatest = latestDraftRef.current;
           if (
@@ -261,7 +299,7 @@ function HybridEditorContent({
 
     const timer = window.setTimeout(() => {
       void flushDraft();
-    }, 2500);
+    }, AUTO_SAVE_DEBOUNCE_MS);
 
     return () => {
       window.clearTimeout(timer);
@@ -279,7 +317,7 @@ function HybridEditorContent({
       const hasUnsavedChanges =
         latest.body !== lastSaved.body || latest.format !== lastSaved.format;
 
-      if (!hasUnsavedChanges) {
+      if (!hasUnsavedChanges || savingRef.current || saveMutation.isPending) {
         return;
       }
 
@@ -297,9 +335,18 @@ function HybridEditorContent({
             version: saved.version,
           }),
         );
+        queryClient.setQueryData(['page-meta', workspaceId, pageId], (current: any) => {
+          if (!current) {
+            return current;
+          }
+          return {
+            ...current,
+            updatedAt: new Date().toISOString(),
+          };
+        });
       });
     };
-  }, [pageId, queryClient, readOnly, workspaceId]);
+  }, [pageId, queryClient, readOnly, saveMutation.isPending, workspaceId]);
 
   const onChangeBody = (next: string) => {
     if (readOnly) {
@@ -308,7 +355,7 @@ function HybridEditorContent({
 
     latestDraftRef.current = { body: next, format };
     setBody(next);
-    setSaveState('saving');
+    setSaveState((prev) => (prev === 'saving' ? prev : 'saving'));
   };
 
   const onChangeFormat = (next: DocFormat) => {
@@ -329,6 +376,10 @@ function HybridEditorContent({
 
   const saveLabel = readOnly
     ? '읽기 전용'
+    : createSubpageMutation.isPending
+      ? '하위 페이지 생성 중...'
+    : optimizingImage
+      ? '이미지 최적화 중...'
     : imageUploadMutation.isPending
       ? '이미지 업로드 중...'
     : saveMutation.isPending || saveState === 'saving'
@@ -400,25 +451,89 @@ function HybridEditorContent({
     insertAtSelection(table, 0, table.length);
   };
 
-  const insertImageSnippet = (imageUrl: string) => {
+  const insertImageSnippet = (imageRef: string) => {
     const snippet =
       format === 'MARKDOWN'
-        ? `![이미지](${imageUrl})`
-        : `<img src="${imageUrl}" alt="이미지" />`;
+        ? `![이미지](${imageRef})`
+        : `<img src="${imageRef}" alt="이미지" />`;
 
     insertAtSelection(snippet, snippet.length, snippet.length);
     toast.success('이미지를 삽입했어요.');
   };
 
+  const insertSubpageLinkSnippet = (nextPage: { id: string; title: string }) => {
+    const href = `/w/${workspaceId}/p/${nextPage.id}`;
+    const safeTitle = nextPage.title
+      .replace(/\\/g, '\\\\')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]');
+    const safeHtmlTitle = nextPage.title
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const snippet =
+      format === 'MARKDOWN'
+        ? `[📄 ${safeTitle}](${href})`
+        : `<p><a href="${href}">📄 ${safeHtmlTitle}</a></p>`;
+
+    const prependNewline = body && !body.endsWith('\n') ? '\n' : '';
+    const appendNewline = format === 'MARKDOWN' ? '\n' : '';
+    const finalSnippet = `${prependNewline}${snippet}${appendNewline}`;
+
+    insertAtSelection(finalSnippet, finalSnippet.length, finalSnippet.length);
+  };
+
+  const onCreateSubpage = () => {
+    if (readOnly || createSubpageMutation.isPending) {
+      return;
+    }
+
+    setNextSubpageTitle(DEFAULT_SUBPAGE_TITLE);
+    setCreateSubpageModalOpen(true);
+  };
+
+  const submitCreateSubpage = () => {
+    const title = nextSubpageTitle.trim() || DEFAULT_SUBPAGE_TITLE;
+    createSubpageMutation.mutate(title, {
+      onSuccess: (createdPage) => {
+        insertSubpageLinkSnippet({
+          id: createdPage.id,
+          title: createdPage.title,
+        });
+        void queryClient.invalidateQueries({ queryKey: ['pages', workspaceId] });
+        setCreateSubpageModalOpen(false);
+        setNextSubpageTitle(DEFAULT_SUBPAGE_TITLE);
+        toast.success('하위 페이지를 만들고 링크를 삽입했어요.');
+      },
+      onError: (error) => {
+        toast.error(getErrorMessage(error));
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (!createSubpageModalOpen) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      subpageTitleInputRef.current?.focus();
+      subpageTitleInputRef.current?.select();
+    });
+  }, [createSubpageModalOpen]);
+
   const triggerImageFilePicker = () => {
-    if (readOnly || imageUploadMutation.isPending) {
+    if (readOnly || optimizingImage || imageUploadMutation.isPending) {
       return;
     }
 
     imageInputRef.current?.click();
   };
 
-  const onSelectImageFile = (event: ChangeEvent<HTMLInputElement>) => {
+  const onSelectImageFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
 
@@ -426,9 +541,15 @@ function HybridEditorContent({
       return;
     }
 
-    imageUploadMutation.mutate(file, {
+    setOptimizingImage(true);
+    const preparedFile = await optimizeImageForUpload(file);
+    setOptimizingImage(false);
+
+    imageUploadMutation.mutate(preparedFile, {
       onSuccess: (response) => {
-        insertImageSnippet(response.url);
+        const imageRef =
+          response.ref ?? buildStoredImageReference(response.bucket, response.path);
+        insertImageSnippet(imageRef);
         queryClient.setQueryData(['page', workspaceId, pageId], (current: any) =>
           mergeDocumentIntoPageCache(current, {
             body: latestDraftRef.current.body,
@@ -443,7 +564,7 @@ function HybridEditorContent({
   };
 
   const onPasteImage = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (readOnly || imageUploadMutation.isPending) {
+    if (readOnly || optimizingImage || imageUploadMutation.isPending) {
       return;
     }
 
@@ -463,13 +584,19 @@ function HybridEditorContent({
       }
 
       event.preventDefault();
-      imageUploadMutation.mutate(file, {
-        onSuccess: (response) => {
-          insertImageSnippet(response.url);
-        },
-        onError: (error) => {
-          toast.error(getErrorMessage(error));
-        },
+      setOptimizingImage(true);
+      void optimizeImageForUpload(file).then((preparedFile) => {
+        setOptimizingImage(false);
+        imageUploadMutation.mutate(preparedFile, {
+          onSuccess: (response) => {
+            const imageRef =
+              response.ref ?? buildStoredImageReference(response.bucket, response.path);
+            insertImageSnippet(imageRef);
+          },
+          onError: (error) => {
+            toast.error(getErrorMessage(error));
+          },
+        });
       });
       break;
     }
@@ -493,148 +620,203 @@ function HybridEditorContent({
   }
 
   return (
-    <section className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-1">
-          {(
-            [
-              ['rich', '편집 (Rich)'],
-              ['markdown', 'Markdown 소스'],
-              ['preview', '미리보기'],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
+    <>
+      <section className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-1">
+            {(
+              [
+                ['rich', '편집 (Rich)'],
+                ['markdown', 'Markdown 소스'],
+                ['preview', '미리보기'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id)}
+                className={cn(
+                  'rounded px-3 py-1.5 text-sm',
+                  activeTab === id
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-600 hover:text-neutral-800',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 text-sm">
+            <Button
               type="button"
-              onClick={() => setActiveTab(id)}
-              className={cn(
-                'rounded px-3 py-1.5 text-sm',
-                activeTab === id
-                  ? 'bg-white text-neutral-900 shadow-sm'
-                  : 'text-neutral-600 hover:text-neutral-800',
-              )}
+              size="sm"
+              variant="outline"
+              onClick={onCreateSubpage}
+              disabled={readOnly || createSubpageMutation.isPending}
             >
-              {label}
-            </button>
-          ))}
+              하위 페이지
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={triggerImageFilePicker}
+              disabled={readOnly || optimizingImage || imageUploadMutation.isPending}
+            >
+              이미지
+            </Button>
+            <select
+              className="h-9 rounded-md border border-neutral-300 bg-white px-2"
+              value={format}
+              onChange={(event) => onChangeFormat(event.target.value as DocFormat)}
+              onBlur={handleBlurSave}
+              disabled={readOnly}
+            >
+              <option value="MARKDOWN">Markdown</option>
+              <option value="HTML">HTML</option>
+            </select>
+            <span className={cn('text-neutral-500', readOnly && 'font-medium text-neutral-700')}>
+              {saveLabel}
+            </span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 text-sm">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={triggerImageFilePicker}
-            disabled={readOnly || imageUploadMutation.isPending}
-          >
-            이미지
-          </Button>
-          <select
-            className="h-9 rounded-md border border-neutral-300 bg-white px-2"
-            value={format}
-            onChange={(event) => onChangeFormat(event.target.value as DocFormat)}
-            onBlur={handleBlurSave}
-            disabled={readOnly}
-          >
-            <option value="MARKDOWN">Markdown</option>
-            <option value="HTML">HTML</option>
-          </select>
-          <span className={cn('text-neutral-500', readOnly && 'font-medium text-neutral-700')}>
-            {saveLabel}
-          </span>
-        </div>
-      </div>
-
-      <input
-        ref={imageInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        className="hidden"
-        onChange={onSelectImageFile}
-      />
-
-      {showMarkdownToolbar ? (
-        <div className="flex flex-wrap gap-1 rounded-md border border-neutral-300 bg-neutral-50 p-2">
-          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => wrapSelection('**', '**', '굵게')}>
-            굵게
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => wrapSelection('*', '*', '기울임')}>
-            기울임
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => insertLinePrefix('# ', '제목')}>
-            H1
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => insertLinePrefix('## ', '소제목')}>
-            H2
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => insertLinePrefix('- ', '목록')}>
-            목록
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => insertLinePrefix('1. ', '항목')}>
-            번호
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => wrapSelection('`', '`', '코드')}>
-            코드
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2"
-            onClick={() => wrapSelection('[', '](https://)', '링크 텍스트')}
-          >
-            링크
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 px-2" onClick={insertTable}>
-            표
-          </Button>
-        </div>
-      ) : null}
-
-      {activeTab === 'rich' ? (
-        format === 'MARKDOWN' ? (
-          <textarea
-            ref={editorTextareaRef}
-            className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
-            value={body}
-            onChange={(event) => onChangeBody(event.target.value)}
-            onBlur={handleBlurSave}
-            onPaste={onPasteImage}
-            placeholder="Markdown으로 작성하세요."
-            readOnly={readOnly}
-          />
-        ) : (
-          <textarea
-            ref={editorTextareaRef}
-            className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
-            value={body}
-            onChange={(event) => onChangeBody(event.target.value)}
-            onBlur={handleBlurSave}
-            onPaste={onPasteImage}
-            placeholder="HTML 소스를 작성하세요."
-            readOnly={readOnly}
-          />
-        )
-      ) : null}
-
-      {activeTab === 'markdown' ? (
-        <textarea
-          ref={editorTextareaRef}
-          className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
-          value={body}
-          onChange={(event) => onChangeBody(event.target.value)}
-          onBlur={handleBlurSave}
-          onPaste={onPasteImage}
-          placeholder="소스를 편집하세요."
-          readOnly={readOnly}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          onChange={onSelectImageFile}
         />
-      ) : null}
 
-      {activeTab === 'preview' ? (
-        <div className="min-h-[320px] rounded-md border border-neutral-200 bg-neutral-50 p-4">
-          <DocumentPreview body={body} format={format} />
-        </div>
-      ) : null}
-    </section>
+        {showMarkdownToolbar ? (
+          <div className="flex flex-wrap gap-1 rounded-md border border-neutral-300 bg-neutral-50 p-2">
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => wrapSelection('**', '**', '굵게')}>
+              굵게
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => wrapSelection('*', '*', '기울임')}>
+              기울임
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => insertLinePrefix('# ', '제목')}>
+              H1
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => insertLinePrefix('## ', '소제목')}>
+              H2
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => insertLinePrefix('- ', '목록')}>
+              목록
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => insertLinePrefix('1. ', '항목')}>
+              번호
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => wrapSelection('`', '`', '코드')}>
+              코드
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2"
+              onClick={() => wrapSelection('[', '](https://)', '링크 텍스트')}
+            >
+              링크
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={insertTable}>
+              표
+            </Button>
+          </div>
+        ) : null}
+
+        {activeTab === 'rich' ? (
+          format === 'MARKDOWN' ? (
+            <textarea
+              ref={editorTextareaRef}
+              className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
+              value={body}
+              onChange={(event) => onChangeBody(event.target.value)}
+              onBlur={handleBlurSave}
+              onPaste={onPasteImage}
+              placeholder="Markdown으로 작성하세요."
+              readOnly={readOnly}
+            />
+          ) : (
+            <textarea
+              ref={editorTextareaRef}
+              className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
+              value={body}
+              onChange={(event) => onChangeBody(event.target.value)}
+              onBlur={handleBlurSave}
+              onPaste={onPasteImage}
+              placeholder="HTML 소스를 작성하세요."
+              readOnly={readOnly}
+            />
+          )
+        ) : null}
+
+        {activeTab === 'markdown' ? (
+          <textarea
+            ref={editorTextareaRef}
+            className="min-h-[320px] w-full rounded-md border border-neutral-300 p-3 font-mono text-sm"
+            value={body}
+            onChange={(event) => onChangeBody(event.target.value)}
+            onBlur={handleBlurSave}
+            onPaste={onPasteImage}
+            placeholder="소스를 편집하세요."
+            readOnly={readOnly}
+          />
+        ) : null}
+
+        {activeTab === 'preview' ? (
+          <div className="min-h-[320px] rounded-md border border-neutral-200 bg-neutral-50 p-4">
+            <DocumentPreview body={body} format={format} />
+          </div>
+        ) : null}
+      </section>
+
+      <Modal
+        open={createSubpageModalOpen}
+        onClose={() => {
+          if (createSubpageMutation.isPending) {
+            return;
+          }
+          setCreateSubpageModalOpen(false);
+        }}
+        title="하위 페이지 만들기"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setCreateSubpageModalOpen(false)}
+              disabled={createSubpageMutation.isPending}
+            >
+              취소
+            </Button>
+            <Button
+              onClick={submitCreateSubpage}
+              disabled={createSubpageMutation.isPending}
+            >
+              생성
+            </Button>
+          </>
+        }
+      >
+        <label className="space-y-2 text-sm text-neutral-700">
+          <span>페이지 제목</span>
+          <Input
+            ref={subpageTitleInputRef}
+            placeholder={DEFAULT_SUBPAGE_TITLE}
+            value={nextSubpageTitle}
+            onChange={(event) => setNextSubpageTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                submitCreateSubpage();
+              }
+            }}
+          />
+        </label>
+      </Modal>
+    </>
   );
 }
 

@@ -7,6 +7,8 @@ import Link from '@tiptap/extension-link';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
 
 const HeaderAsCell = TableHeader.extend({
   parseHTML() {
@@ -67,6 +69,9 @@ function ToolButton({
 export function RichEditor({ value, onChange, editable = true }: RichEditorProps) {
   const onChangeRef = useRef(onChange);
   const [initialContent] = useState(value);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [linkValue, setLinkValue] = useState('https://');
+  const linkInputRef = useRef<HTMLInputElement | null>(null);
   const lastEmittedHtmlRef = useRef(value);
 
   useEffect(() => {
@@ -139,15 +144,51 @@ export function RichEditor({ value, onChange, editable = true }: RichEditorProps
     }
   }, [editor, value]);
 
+  useEffect(() => {
+    if (!linkModalOpen) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      linkInputRef.current?.focus();
+      linkInputRef.current?.select();
+    });
+  }, [linkModalOpen]);
+
   if (!editor) {
     return <div className="h-72 rounded-md border border-neutral-300" />;
   }
 
   const insideTable = editor.isActive('table');
 
+  const openLinkModal = () => {
+    const previous = editor.getAttributes('link').href as string | undefined;
+    setLinkValue(previous ?? 'https://');
+    setLinkModalOpen(true);
+  };
+
+  const submitLink = () => {
+    const url = linkValue.trim();
+
+    if (!url) {
+      editor.chain().focus().unsetLink().run();
+      setLinkModalOpen(false);
+      return;
+    }
+
+    if (!SAFE_LINK_PATTERN.test(url)) {
+      toast.error('허용되지 않은 링크 형식입니다.');
+      return;
+    }
+
+    editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+    setLinkModalOpen(false);
+  };
+
   return (
-    <div>
-      <div className="flex flex-wrap gap-1 rounded-t-md border border-neutral-300 bg-neutral-50 p-2">
+    <>
+      <div>
+        <div className="flex flex-wrap gap-1 rounded-t-md border border-neutral-300 bg-neutral-50 p-2">
         <ToolButton
           label="B"
           active={editor.isActive('bold')}
@@ -193,26 +234,7 @@ export function RichEditor({ value, onChange, editable = true }: RichEditorProps
         <ToolButton
           label="링크"
           active={editor.isActive('link')}
-          onClick={() => {
-            const previous = editor.getAttributes('link').href as string | undefined;
-            const url = window.prompt('링크 URL', previous ?? 'https://');
-
-            if (url === null) {
-              return;
-            }
-
-            if (!url) {
-              editor.chain().focus().unsetLink().run();
-              return;
-            }
-
-            if (!SAFE_LINK_PATTERN.test(url)) {
-              toast.error('허용되지 않은 링크 형식입니다.');
-              return;
-            }
-
-            editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
-          }}
+          onClick={openLinkModal}
           disabled={!editable}
         />
         <ToolButton
@@ -255,8 +277,44 @@ export function RichEditor({ value, onChange, editable = true }: RichEditorProps
           onClick={() => editor.chain().focus().deleteColumn().run()}
           disabled={!editable || !insideTable}
         />
+        </div>
+        <EditorContent editor={editor} />
       </div>
-      <EditorContent editor={editor} />
-    </div>
+      <Modal
+        open={linkModalOpen}
+        onClose={() => setLinkModalOpen(false)}
+        title="링크 입력"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setLinkModalOpen(false)}>
+              취소
+            </Button>
+            <Button variant="outline" onClick={() => setLinkValue('')}>
+              링크 제거
+            </Button>
+            <Button onClick={submitLink}>적용</Button>
+          </>
+        }
+      >
+        <label className="space-y-2 text-sm text-neutral-700">
+          <span>URL</span>
+          <Input
+            ref={linkInputRef}
+            value={linkValue}
+            placeholder="https://example.com"
+            onChange={(event) => setLinkValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                submitLink();
+              }
+            }}
+          />
+        </label>
+        <p className="mt-2 text-xs text-neutral-500">
+          비워두고 적용하면 현재 링크가 제거됩니다.
+        </p>
+      </Modal>
+    </>
   );
 }

@@ -27,6 +27,40 @@ import type {
   Workspace,
 } from '@/types';
 
+interface OffsetPaginationResponse<T> {
+  items: T[];
+  nextOffset: number | null;
+}
+
+interface PaginatedPageListResponse extends PageListResponse {
+  nextOffset: number | null;
+}
+
+const DEFAULT_PAGINATION_LIMIT = 120;
+const MAX_PAGINATION_ROUNDS = 100;
+
+async function collectOffsetPages<T>(
+  fetchChunk: (offset: number) => Promise<OffsetPaginationResponse<T>>,
+): Promise<T[]> {
+  const all: T[] = [];
+  let offset = 0;
+  let round = 0;
+
+  while (round < MAX_PAGINATION_ROUNDS) {
+    const chunk = await fetchChunk(offset);
+    all.push(...chunk.items);
+
+    if (chunk.nextOffset === null) {
+      break;
+    }
+
+    offset = chunk.nextOffset;
+    round += 1;
+  }
+
+  return all;
+}
+
 export function authMe() {
   return apiClient.get<AuthMeResponse>('/auth/me').then((res) => res.data);
 }
@@ -69,9 +103,16 @@ export function deleteWorkspace(id: string) {
 }
 
 export function listMembers(workspaceId: string) {
-  return apiClient
-    .get<Member[]>(`/workspaces/${workspaceId}/members`)
-    .then((res) => res.data);
+  return collectOffsetPages<Member>((offset) =>
+    apiClient
+      .get<OffsetPaginationResponse<Member>>(`/workspaces/${workspaceId}/members`, {
+        params: {
+          limit: DEFAULT_PAGINATION_LIMIT,
+          offset,
+        },
+      })
+      .then((res) => res.data),
+  );
 }
 
 export function updateMemberRole(
@@ -91,9 +132,16 @@ export function removeMember(workspaceId: string, memberId: string) {
 }
 
 export function listInvites(workspaceId: string) {
-  return apiClient
-    .get<Invite[]>(`/workspaces/${workspaceId}/invites`)
-    .then((res) => res.data);
+  return collectOffsetPages<Invite>((offset) =>
+    apiClient
+      .get<OffsetPaginationResponse<Invite>>(`/workspaces/${workspaceId}/invites`, {
+        params: {
+          limit: DEFAULT_PAGINATION_LIMIT,
+          offset,
+        },
+      })
+      .then((res) => res.data),
+  );
 }
 
 export function createInvite(
@@ -124,9 +172,34 @@ export function getInvitePreview(token: string) {
 }
 
 export function listPages(workspaceId: string) {
-  return apiClient
-    .get<PageListResponse>(`/workspaces/${workspaceId}/pages`)
-    .then((res) => res.data);
+  const fetchChunk = (offset: number) =>
+    apiClient
+      .get<PaginatedPageListResponse>(`/workspaces/${workspaceId}/pages`, {
+        params: {
+          limit: DEFAULT_PAGINATION_LIMIT,
+          offset,
+        },
+      })
+      .then((res) => res.data);
+
+  return fetchChunk(0).then(async (first) => {
+    const pages = [...first.pages];
+    let nextOffset = first.nextOffset;
+    let round = 0;
+
+    while (nextOffset !== null && round < MAX_PAGINATION_ROUNDS) {
+      const chunk = await fetchChunk(nextOffset);
+      pages.push(...chunk.pages);
+      nextOffset = chunk.nextOffset;
+      round += 1;
+    }
+
+    return {
+      pages,
+      viewerRole: first.viewerRole,
+      memberRole: first.memberRole,
+    } satisfies PageListResponse;
+  });
 }
 
 export function getPage(workspaceId: string, pageId: string) {
@@ -273,9 +346,19 @@ export function removePageShare(
 }
 
 export function listPageInvites(workspaceId: string, pageId: string) {
-  return apiClient
-    .get<PageInviteSummary[]>(`/workspaces/${workspaceId}/pages/${pageId}/invites`)
-    .then((res) => res.data);
+  return collectOffsetPages<PageInviteSummary>((offset) =>
+    apiClient
+      .get<OffsetPaginationResponse<PageInviteSummary>>(
+        `/workspaces/${workspaceId}/pages/${pageId}/invites`,
+        {
+          params: {
+            limit: DEFAULT_PAGINATION_LIMIT,
+            offset,
+          },
+        },
+      )
+      .then((res) => res.data),
+  );
 }
 
 export function revokePageInvite(
@@ -301,11 +384,19 @@ export function getPageInvitePreview(token: string) {
 }
 
 export function listPageAccessRequests(workspaceId: string, pageId: string) {
-  return apiClient
-    .get<PageAccessRequest[]>(
-      `/workspaces/${workspaceId}/pages/${pageId}/access-requests`,
-    )
-    .then((res) => res.data);
+  return collectOffsetPages<PageAccessRequest>((offset) =>
+    apiClient
+      .get<OffsetPaginationResponse<PageAccessRequest>>(
+        `/workspaces/${workspaceId}/pages/${pageId}/access-requests`,
+        {
+          params: {
+            limit: DEFAULT_PAGINATION_LIMIT,
+            offset,
+          },
+        },
+      )
+      .then((res) => res.data),
+  );
 }
 
 export function handlePageAccessRequest(

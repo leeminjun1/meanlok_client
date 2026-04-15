@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { getPage } from '@/lib/api/endpoints';
 import { MarkdownView } from '@/components/editor/MarkdownView';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { optimizeHtmlImageTagsForPreview } from '@/lib/editor/image-html';
+import { resolveStoredImageReferences } from '@/lib/editor/image-ref';
 import { sanitizeHtml } from '@/lib/sanitize';
 import type { DocFormat } from '@/types';
 
@@ -13,8 +15,12 @@ interface PageDocumentPreviewProps {
 }
 
 function PreviewBody({ body, format }: { body: string; format: DocFormat }) {
+  const normalizedBody = resolveStoredImageReferences(body);
+
   if (format === 'HTML') {
-    const clean = sanitizeHtml(body);
+    const clean = sanitizeHtml(
+      optimizeHtmlImageTagsForPreview(normalizedBody),
+    );
     return (
       <div
         className="prose prose-sm max-w-none text-neutral-800"
@@ -23,7 +29,7 @@ function PreviewBody({ body, format }: { body: string; format: DocFormat }) {
     );
   }
 
-  return <MarkdownView body={body} />;
+  return <MarkdownView body={normalizedBody} />;
 }
 
 export function PageDocumentPreview({ workspaceId, pageId }: PageDocumentPreviewProps) {
