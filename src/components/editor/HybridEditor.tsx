@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { getErrorMessage } from '@/lib/api/error';
 import { MarkdownView } from '@/components/editor/MarkdownView';
 import { Button } from '@/components/ui/Button';
+import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -29,6 +30,9 @@ import { cn } from '@/lib/utils';
 type EditorTab = 'rich' | 'markdown' | 'preview';
 type EditorMode = 'view' | 'edit';
 type SaveState = 'idle' | 'saving' | 'saved';
+type CalloutKind = 'info' | 'tip' | 'warning' | 'danger';
+type BadgeKind = 'todo' | 'progress' | 'done' | 'blocked';
+type HighlightKind = 'key' | 'summary';
 type Draft = { body: string; format: DocFormat };
 type SavePayload = {
   format: DocFormat;
@@ -39,6 +43,27 @@ type SavePayload = {
 
 const AUTO_SAVE_DEBOUNCE_MS = 3500;
 const DEFAULT_SUBPAGE_TITLE = '새 하위 페이지';
+const DEFAULT_CALLOUT_BODY = '내용을 입력하세요.';
+const DEFAULT_HIGHLIGHT_BODY = '핵심 내용을 입력하세요.';
+
+const CALLOUT_META: Record<CalloutKind, { label: string; title: string; className: string }> = {
+  info: { label: '안내', title: '안내', className: 'ml-callout ml-callout-info' },
+  tip: { label: '팁', title: '팁', className: 'ml-callout ml-callout-tip' },
+  warning: { label: '주의', title: '주의', className: 'ml-callout ml-callout-warning' },
+  danger: { label: '위험', title: '위험', className: 'ml-callout ml-callout-danger' },
+};
+
+const BADGE_META: Record<BadgeKind, { label: string; text: string; className: string }> = {
+  todo: { label: 'TODO', text: 'TODO', className: 'ml-badge ml-badge-todo' },
+  progress: { label: '진행 중', text: 'IN PROGRESS', className: 'ml-badge ml-badge-progress' },
+  done: { label: '완료', text: 'DONE', className: 'ml-badge ml-badge-done' },
+  blocked: { label: '차단', text: 'BLOCKED', className: 'ml-badge ml-badge-blocked' },
+};
+
+const HIGHLIGHT_META: Record<HighlightKind, { label: string; text: string; className: string }> = {
+  key: { label: '핵심', text: '핵심 요약', className: 'ml-highlight ml-highlight-key' },
+  summary: { label: '요약', text: '요약', className: 'ml-highlight ml-highlight-summary' },
+};
 
 function toSingleDelta(before: string, after: string): DocumentDelta | null {
   if (before === after) {
@@ -461,6 +486,81 @@ function HybridEditorContent({
     toast.success('이미지를 삽입했어요.');
   };
 
+  const insertSnippetWithFocus = (snippet: string, focusText?: string) => {
+    if (!focusText) {
+      insertAtSelection(snippet, snippet.length, snippet.length);
+      return;
+    }
+
+    const start = snippet.indexOf(focusText);
+    if (start < 0) {
+      insertAtSelection(snippet, snippet.length, snippet.length);
+      return;
+    }
+
+    insertAtSelection(snippet, start, start + focusText.length);
+  };
+
+  const insertBlockSnippet = (snippet: string, focusText?: string) => {
+    const textarea = editorTextareaRef.current;
+    const start = textarea?.selectionStart ?? body.length;
+    const end = textarea?.selectionEnd ?? body.length;
+
+    const before = body.slice(0, start);
+    const after = body.slice(end);
+
+    let leading = '';
+    if (before.length > 0) {
+      leading = before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+    }
+
+    let trailing = '';
+    if (after.length > 0) {
+      trailing = after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+    }
+
+    const normalized = `${leading}${snippet}${trailing}`;
+
+    insertSnippetWithFocus(normalized, focusText);
+  };
+
+  const insertCalloutSnippet = (kind: CalloutKind) => {
+    const { title, className } = CALLOUT_META[kind];
+    const snippet = `<div class="${className}">
+<p class="ml-callout-title">${title}</p>
+<p>${DEFAULT_CALLOUT_BODY}</p>
+</div>`;
+
+    insertBlockSnippet(snippet, DEFAULT_CALLOUT_BODY);
+    toast.success(`${CALLOUT_META[kind].label} 콜아웃을 삽입했어요.`);
+  };
+
+  const insertBadgeSnippet = (kind: BadgeKind) => {
+    const textarea = editorTextareaRef.current;
+    const start = textarea?.selectionStart ?? body.length;
+    const end = textarea?.selectionEnd ?? body.length;
+    const selected = body.slice(start, end).trim();
+    const { text, className: badgeClassName } = BADGE_META[kind];
+    const badgeText = selected || text;
+    const snippet = `<span class="${badgeClassName}">${badgeText}</span>`;
+
+    insertSnippetWithFocus(snippet, badgeText);
+    toast.success(`${BADGE_META[kind].label} 뱃지를 삽입했어요.`);
+  };
+
+  const insertHighlightSnippet = (kind: HighlightKind) => {
+    const textarea = editorTextareaRef.current;
+    const start = textarea?.selectionStart ?? body.length;
+    const end = textarea?.selectionEnd ?? body.length;
+    const selected = body.slice(start, end).trim();
+    const { className: highlightClassName } = HIGHLIGHT_META[kind];
+    const text = selected || DEFAULT_HIGHLIGHT_BODY;
+    const snippet = `<div class="${highlightClassName}">${text}</div>`;
+
+    insertBlockSnippet(snippet, text);
+    toast.success(`${HIGHLIGHT_META[kind].label} 강조 박스를 삽입했어요.`);
+  };
+
   const insertSubpageLinkSnippet = (nextPage: { id: string; title: string }) => {
     const href = `/w/${workspaceId}/p/${nextPage.id}`;
     const safeTitle = nextPage.title
@@ -647,10 +747,52 @@ function HybridEditorContent({
             ))}
           </div>
 
-          <div className="flex items-center gap-2 text-sm">
-            <Button
-              type="button"
-              size="sm"
+        <div className="flex items-center gap-2 text-sm">
+          <DropdownMenu
+            align="left"
+            trigger={
+              <span className="inline-flex h-7 items-center rounded border border-neutral-300 bg-white px-2 text-xs text-neutral-700">
+                콜아웃
+              </span>
+            }
+            items={(Object.entries(CALLOUT_META) as Array<[CalloutKind, { label: string }]>).map(
+              ([kind, meta]) => ({
+                label: meta.label,
+                onClick: () => insertCalloutSnippet(kind),
+              }),
+            )}
+          />
+          <DropdownMenu
+            align="left"
+            trigger={
+              <span className="inline-flex h-7 items-center rounded border border-neutral-300 bg-white px-2 text-xs text-neutral-700">
+                뱃지
+              </span>
+            }
+            items={(Object.entries(BADGE_META) as Array<[BadgeKind, { label: string }]>).map(
+              ([kind, meta]) => ({
+                label: meta.label,
+                onClick: () => insertBadgeSnippet(kind),
+              }),
+            )}
+          />
+          <DropdownMenu
+            align="left"
+            trigger={
+              <span className="inline-flex h-7 items-center rounded border border-neutral-300 bg-white px-2 text-xs text-neutral-700">
+                강조
+              </span>
+            }
+            items={(Object.entries(HIGHLIGHT_META) as Array<[HighlightKind, { label: string }]>).map(
+              ([kind, meta]) => ({
+                label: meta.label,
+                onClick: () => insertHighlightSnippet(kind),
+              }),
+            )}
+          />
+          <Button
+            type="button"
+            size="sm"
               variant="outline"
               onClick={onCreateSubpage}
               disabled={readOnly || createSubpageMutation.isPending}

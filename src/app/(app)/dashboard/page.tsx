@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { listSharedPages, listWorkspaces } from '@/lib/api/endpoints';
+import { authMe, listSharedPages, listWorkspaces } from '@/lib/api/endpoints';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { CreateWorkspaceModal } from '@/components/modals/CreateWorkspaceModal';
@@ -20,18 +20,26 @@ export default function DashboardPage() {
     queryFn: listSharedPages,
     staleTime: 60 * 1000,
   });
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: authMe,
+    staleTime: 60 * 1000,
+  });
+  const canViewOpsMetrics = meQuery.data?.isAdmin === true;
 
   return (
     <section className="mx-auto w-full max-w-5xl px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-neutral-900">내 워크스페이스</h1>
         <div className="flex items-center gap-2">
-          <Link
-            href="/ops/metrics"
-            className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-300 bg-white px-4 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
-          >
-            운영 지표
-          </Link>
+          {canViewOpsMetrics ? (
+            <Link
+              href="/ops/metrics"
+              className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-300 bg-white px-4 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            >
+              운영 지표
+            </Link>
+          ) : null}
           <Button onClick={() => setCreateOpen(true)}>새 워크스페이스</Button>
         </div>
       </div>

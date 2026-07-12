@@ -8,6 +8,32 @@ const turndown = new TurndownService({
   emDelimiter: '*',
 });
 
+function hasMeanlokClass(node: Element, expectedClass: string) {
+  const className = node.getAttribute('class') ?? '';
+  return className.split(/\s+/).includes(expectedClass);
+}
+
+turndown.addRule('meanlokCallout', {
+  filter: (node) =>
+    node.nodeName === 'DIV' &&
+    hasMeanlokClass(node as Element, 'ml-callout'),
+  replacement: (_content, node) => `\n\n${(node as Element).outerHTML}\n\n`,
+});
+
+turndown.addRule('meanlokHighlight', {
+  filter: (node) =>
+    node.nodeName === 'DIV' &&
+    hasMeanlokClass(node as Element, 'ml-highlight'),
+  replacement: (_content, node) => `\n\n${(node as Element).outerHTML}\n\n`,
+});
+
+turndown.addRule('meanlokBadge', {
+  filter: (node) =>
+    node.nodeName === 'SPAN' &&
+    hasMeanlokClass(node as Element, 'ml-badge'),
+  replacement: (_content, node) => (node as Element).outerHTML,
+});
+
 export function htmlToMarkdown(html: string): string {
   if (!html.trim()) {
     return '';

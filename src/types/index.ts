@@ -70,6 +70,7 @@ export interface Invite {
 
 export interface AuthMeResponse {
   profile: Profile;
+  isAdmin: boolean;
 }
 
 export interface AcceptInviteResponse {
